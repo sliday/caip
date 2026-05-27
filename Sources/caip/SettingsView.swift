@@ -242,7 +242,7 @@ struct SettingsView: View {
         modelsLoading = true
         modelsError = nil
         do {
-            let list = try await OpenRouter.listModels(baseURL: store.baseURL, apiKey: store.apiKey)
+            let list = try await OpenRouter.listModels(baseURL: store.baseURL, apiKey: store.apiKey, preset: store.preset)
             self.models = list.sorted { ($0.name ?? $0.id) < ($1.name ?? $1.id) }
             self.modelsLoading = false
         } catch {
@@ -276,17 +276,36 @@ struct OpenRouterPane: View {
                 LaunchAtLoginCard()
 
                 Card("Provider", icon: "server.rack") {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Picker("Provider", selection: Binding(
-                            get: { store.preset },
-                            set: { store.updateServicePreset($0) }
-                        )) {
-                            ForEach(ServicePreset.allCases) { p in
-                                Label(p.title, systemImage: p.symbol).tag(p)
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack(spacing: 12) {
+                            Image(systemName: store.preset.symbol)
+                                .font(.system(size: 18))
+                                .foregroundStyle(.tint)
+                                .symbolRenderingMode(.hierarchical)
+                                .frame(width: 22)
+
+                            Picker("Provider", selection: Binding(
+                                get: { store.preset },
+                                set: { store.updateServicePreset($0) }
+                            )) {
+                                Section("Cloud") {
+                                    ForEach([ServicePreset.openRouter, .openAI, .anthropic, .zai, .kimi]) { p in
+                                        Label(p.title, systemImage: p.symbol).tag(p)
+                                    }
+                                }
+                                Section("Local") {
+                                    ForEach([ServicePreset.ollama, .lmStudio, .jan]) { p in
+                                        Label(p.title, systemImage: p.symbol).tag(p)
+                                    }
+                                }
+                                Section {
+                                    Label(ServicePreset.custom.title, systemImage: ServicePreset.custom.symbol)
+                                        .tag(ServicePreset.custom)
+                                }
                             }
+                            .labelsHidden()
+                            .controlSize(.large)
                         }
-                        .pickerStyle(.segmented)
-                        .labelsHidden()
 
                         Text(store.preset.subtitle)
                             .font(.caption)
@@ -309,10 +328,10 @@ struct OpenRouterPane: View {
                 }
 
                 if store.preset.needsAPIKey || store.preset == .custom {
-                    Card(store.preset == .openRouter ? "OpenRouter API Key" : "API Key (optional)",
+                    Card(store.preset.needsAPIKey ? "\(store.preset.title) API Key" : "API Key (optional)",
                          icon: "lock.shield") {
                         VStack(alignment: .leading, spacing: 8) {
-                            SecureField(store.preset == .openRouter ? "sk-or-…" : "leave blank if not needed",
+                            SecureField(store.preset.apiKeyPlaceholder,
                                         text: Binding(
                                             get: { store.apiKey },
                                             set: { store.updateAPIKey($0) }
@@ -416,13 +435,13 @@ struct OpenRouterPane: View {
     }
 
     private var apiKeyHint: String {
+        if let url = store.preset.apiKeyURL {
+            return "Get a key at \(url.replacingOccurrences(of: "https://", with: ""))."
+        }
         switch store.preset {
-        case .openRouter:
-            return "Get a key at openrouter.ai/keys."
-        case .custom:
-            return "Provide one if your endpoint requires Bearer auth."
-        case .ollama, .lmStudio, .jan:
-            return "Optional. Most local servers don't require a key."
+        case .custom: return "Provide one if your endpoint requires Bearer auth."
+        case .ollama, .lmStudio, .jan: return "Optional. Most local servers don't require a key."
+        default: return ""
         }
     }
 

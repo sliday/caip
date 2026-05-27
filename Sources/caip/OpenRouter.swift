@@ -4,13 +4,17 @@ import Foundation
 // Ollama, LM Studio, Jan, llama.cpp, vLLM, or any custom endpoint.
 
 enum ServicePreset: String, CaseIterable, Identifiable, Codable {
-    case openRouter, ollama, lmStudio, jan, custom
+    case openRouter, openAI, anthropic, zai, kimi, ollama, lmStudio, jan, custom
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .openRouter: return "OpenRouter"
+        case .openAI:     return "OpenAI"
+        case .anthropic:  return "Anthropic"
+        case .zai:        return "Z.AI"
+        case .kimi:       return "Kimi"
         case .ollama:     return "Ollama"
         case .lmStudio:   return "LM Studio"
         case .jan:        return "Jan"
@@ -21,6 +25,10 @@ enum ServicePreset: String, CaseIterable, Identifiable, Codable {
     var subtitle: String {
         switch self {
         case .openRouter: return "Cloud · 350+ models · requires key"
+        case .openAI:     return "Cloud · GPT-4/o-series direct from OpenAI"
+        case .anthropic:  return "Cloud · Claude models via OpenAI-compat layer"
+        case .zai:        return "Cloud · Zhipu GLM family"
+        case .kimi:       return "Cloud · Moonshot Kimi models (long context)"
         case .ollama:     return "Local · runs models on your Mac"
         case .lmStudio:   return "Local · GUI for local models"
         case .jan:        return "Local · open-source chat runtime"
@@ -31,6 +39,10 @@ enum ServicePreset: String, CaseIterable, Identifiable, Codable {
     var defaultBaseURL: String {
         switch self {
         case .openRouter: return "https://openrouter.ai/api/v1"
+        case .openAI:     return "https://api.openai.com/v1"
+        case .anthropic:  return "https://api.anthropic.com/v1"
+        case .zai:        return "https://api.z.ai/api/paas/v4"
+        case .kimi:       return "https://api.moonshot.ai/v1"
         case .ollama:     return "http://localhost:11434/v1"
         case .lmStudio:   return "http://localhost:1234/v1"
         case .jan:        return "http://127.0.0.1:1337/v1"
@@ -40,19 +52,59 @@ enum ServicePreset: String, CaseIterable, Identifiable, Codable {
 
     var needsAPIKey: Bool {
         switch self {
-        case .openRouter: return true
+        case .openRouter, .openAI, .anthropic, .zai, .kimi: return true
         case .ollama, .lmStudio, .jan: return false
         case .custom: return false // user decides
+        }
+    }
+
+    var apiKeyURL: String? {
+        switch self {
+        case .openRouter: return "https://openrouter.ai/keys"
+        case .openAI:     return "https://platform.openai.com/api-keys"
+        case .anthropic:  return "https://console.anthropic.com/settings/keys"
+        case .zai:        return "https://z.ai/manage-apikey/apikey-list"
+        case .kimi:       return "https://platform.kimi.ai/console/api-keys"
+        default: return nil
+        }
+    }
+
+    var apiKeyPlaceholder: String {
+        switch self {
+        case .openRouter: return "sk-or-…"
+        case .openAI:     return "sk-…"
+        case .anthropic:  return "sk-ant-…"
+        case .zai, .kimi: return "your API key"
+        default:          return "leave blank if not needed"
         }
     }
 
     var symbol: String {
         switch self {
         case .openRouter: return "globe"
+        case .openAI:     return "circle.hexagongrid.fill"
+        case .anthropic:  return "a.circle.fill"
+        case .zai:        return "z.circle.fill"
+        case .kimi:       return "k.circle.fill"
         case .ollama:     return "cube"
         case .lmStudio:   return "macbook"
         case .jan:        return "j.square"
         case .custom:     return "slider.horizontal.3"
+        }
+    }
+
+    /// Z.AI does not expose `/models`. Provide a curated list so the picker still works.
+    var hardcodedModels: [OpenRouterModel]? {
+        switch self {
+        case .zai:
+            return [
+                OpenRouterModel(id: "glm-4.6", name: "GLM-4.6", promptPrice: nil, completionPrice: nil, contextLength: 200_000, createdAt: nil),
+                OpenRouterModel(id: "glm-4.5", name: "GLM-4.5", promptPrice: nil, completionPrice: nil, contextLength: 128_000, createdAt: nil),
+                OpenRouterModel(id: "glm-4-air", name: "GLM-4 Air", promptPrice: nil, completionPrice: nil, contextLength: 128_000, createdAt: nil),
+                OpenRouterModel(id: "glm-4-flash", name: "GLM-4 Flash", promptPrice: nil, completionPrice: nil, contextLength: 128_000, createdAt: nil)
+            ]
+        default:
+            return nil
         }
     }
 }
@@ -119,7 +171,8 @@ enum OpenRouterError: Error, LocalizedError {
 
 enum OpenRouter {
 
-    static func listModels(baseURL: String, apiKey: String) async throws -> [OpenRouterModel] {
+    static func listModels(baseURL: String, apiKey: String, preset: ServicePreset = .custom) async throws -> [OpenRouterModel] {
+        if let curated = preset.hardcodedModels { return curated }
         let url = try url(base: baseURL, path: "models")
         var req = URLRequest(url: url)
         if !apiKey.isEmpty {
