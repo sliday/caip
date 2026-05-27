@@ -107,21 +107,15 @@ struct SettingsView: View {
     var body: some View {
         NavigationSplitView(columnVisibility: .constant(.all)) {
             sidebar
-                .navigationSplitViewColumnWidth(min: 260, ideal: 300, max: 380)
+                .frame(minWidth: 320, idealWidth: 360, maxWidth: 460)
+                .navigationSplitViewColumnWidth(min: 320, ideal: 360, max: 460)
                 .toolbar(removing: .sidebarToggle)
         } detail: {
             detail
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .toolbarBackground(.automatic, for: .windowToolbar)
-                .toolbar {
-                    ToolbarItem(placement: .principal) {
-                        Text("Copy · AI · Paste")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(.secondary)
-                    }
-                }
         }
-        .frame(minWidth: 820, minHeight: 560)
+        .frame(minWidth: 920, minHeight: 580)
         .task { await loadModels() }
         .onChange(of: store.apiKey) { _, _ in
             Task { await loadModels() }
@@ -188,26 +182,19 @@ struct SettingsView: View {
 
     @ViewBuilder
     private func sidebarRow(_ preset: Preset) -> some View {
-        HStack(spacing: 9) {
-            Image(systemName: "sparkle")
-                .foregroundStyle(.tint)
-                .symbolRenderingMode(.hierarchical)
-                .frame(width: 16)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(preset.name)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                if let hk = preset.hotkey {
-                    Text(shortcutString(hk))
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text("No shortcut")
-                        .font(.system(size: 10))
-                        .foregroundStyle(.tertiary)
-                }
+        HStack(spacing: 10) {
+            Text(preset.name)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if let hk = preset.hotkey {
+                Text(shortcutString(hk))
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 4))
             }
-            Spacer(minLength: 0)
         }
         .padding(.vertical, 2)
     }

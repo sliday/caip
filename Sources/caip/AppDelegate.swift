@@ -62,13 +62,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if settingsWindow == nil {
             let root = SettingsView().environment(store)
             let host = NSHostingController(rootView: root)
-            host.sizingOptions = .preferredContentSize
             let win = NSWindow(contentViewController: host)
-            win.setContentSize(NSSize(width: 820, height: 560))
+            win.setContentSize(NSSize(width: 940, height: 600))
+            win.minSize = NSSize(width: 920, height: 560)
             win.styleMask = [.titled, .closable, .resizable, .miniaturizable, .fullSizeContentView]
             win.title = "Copy · AI · Paste"
             win.titlebarAppearsTransparent = true
-            win.titleVisibility = .hidden  // SwiftUI principal toolbar item provides the visible title
+            win.titleVisibility = .visible
             win.toolbarStyle = .unified
             // Empty toolbar so AppKit installs the unified title bar (gives us the
             // scroll-edge material blur). Visual effect comes from titlebar transparency.
