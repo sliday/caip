@@ -5,6 +5,98 @@ enum SettingsPane: Hashable {
     case preset(UUID)
 }
 
+// MARK: - Shared visual primitives
+
+struct PaneHeader: View {
+    let icon: String
+    let title: String
+    let subtitle: String?
+    let trailing: AnyView?
+
+    init(icon: String, title: String, subtitle: String? = nil, trailing: AnyView? = nil) {
+        self.icon = icon
+        self.title = title
+        self.subtitle = subtitle
+        self.trailing = trailing
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 26))
+                .foregroundStyle(.tint)
+                .symbolRenderingMode(.hierarchical)
+                .frame(width: 44, height: 44)
+                .background(.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title).font(.title2.weight(.semibold))
+                if let subtitle = subtitle {
+                    Text(subtitle).font(.callout).foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+            if let trailing = trailing { trailing }
+        }
+    }
+}
+
+struct Card<Content: View>: View {
+    let title: String?
+    let icon: String?
+    @ViewBuilder var content: () -> Content
+
+    init(_ title: String? = nil, icon: String? = nil, @ViewBuilder content: @escaping () -> Content) {
+        self.title = title
+        self.icon = icon
+        self.content = content
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if let title = title {
+                HStack(spacing: 6) {
+                    if let icon = icon {
+                        Image(systemName: icon)
+                            .imageScale(.small)
+                            .foregroundStyle(.secondary)
+                    }
+                    Text(title)
+                        .font(.system(size: 11, weight: .semibold))
+                        .textCase(.uppercase)
+                        .foregroundStyle(.secondary)
+                        .tracking(0.4)
+                }
+                .padding(.horizontal, 4)
+                .padding(.bottom, 8)
+            }
+            content()
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .strokeBorder(Color.primary.opacity(0.07), lineWidth: 1)
+                )
+        }
+    }
+}
+
+struct CalloutCard<Content: View>: View {
+    let tint: Color
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        content()
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(tint.opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .strokeBorder(tint.opacity(0.25), lineWidth: 1)
+            )
+    }
+}
+
 struct SettingsView: View {
     @Environment(PresetStore.self) private var store
     @State private var selection: SettingsPane? = .openRouter
@@ -15,12 +107,21 @@ struct SettingsView: View {
     var body: some View {
         NavigationSplitView(columnVisibility: .constant(.all)) {
             sidebar
-                .navigationSplitViewColumnWidth(min: 220, ideal: 240, max: 280)
+                .navigationSplitViewColumnWidth(min: 260, ideal: 300, max: 380)
+                .toolbar(removing: .sidebarToggle)
         } detail: {
             detail
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .toolbarBackground(.automatic, for: .windowToolbar)
+                .toolbar {
+                    ToolbarItem(placement: .principal) {
+                        Text("Copy · AI · Paste")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                }
         }
-        .frame(minWidth: 780, minHeight: 520)
+        .frame(minWidth: 820, minHeight: 560)
         .task { await loadModels() }
         .onChange(of: store.apiKey) { _, _ in
             Task { await loadModels() }
@@ -31,55 +132,84 @@ struct SettingsView: View {
 
     private var sidebar: some View {
         List(selection: $selection) {
-            Section {
+            Section("Service") {
                 Label("OpenRouter", systemImage: "key.fill")
                     .symbolRenderingMode(.hierarchical)
                     .tag(SettingsPane.openRouter)
-            } header: {
-                Text("Service")
             }
 
-            Section {
+            Section("Actions") {
                 ForEach(store.presets) { preset in
                     sidebarRow(preset)
                         .tag(SettingsPane.preset(preset.id))
                 }
-            } header: {
-                HStack {
-                    Text("Actions")
-                    Spacer()
-                    Button {
-                        let new = store.addPreset()
-                        selection = .preset(new.id)
-                    } label: {
-                        Image(systemName: "plus")
-                            .imageScale(.small)
-                    }
-                    .buttonStyle(.borderless)
-                    .help("Add Action")
-                }
             }
         }
         .listStyle(.sidebar)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            sidebarFooter
+        }
+    }
+
+    private var sidebarFooter: some View {
+        HStack(spacing: 0) {
+            Button {
+                let new = store.addPreset()
+                selection = .preset(new.id)
+            } label: {
+                Image(systemName: "plus")
+                    .frame(width: 28, height: 22)
+            }
+            .help("Add Action")
+
+            Button {
+                if case .preset(let id) = selection,
+                   let preset = store.presets.first(where: { $0.id == id }) {
+                    store.remove(preset)
+                    selection = .openRouter
+                }
+            } label: {
+                Image(systemName: "minus")
+                    .frame(width: 28, height: 22)
+            }
+            .help("Delete selected Action")
+            .disabled({
+                if case .preset = selection { return false } else { return true }
+            }())
+
+            Spacer()
+        }
+        .buttonStyle(.borderless)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 4)
+        .background(.bar)
+        .overlay(Rectangle().fill(Color.primary.opacity(0.08)).frame(height: 0.5), alignment: .top)
     }
 
     @ViewBuilder
     private func sidebarRow(_ preset: Preset) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 9) {
             Image(systemName: "sparkle")
                 .foregroundStyle(.tint)
                 .symbolRenderingMode(.hierarchical)
-            Text(preset.name).lineLimit(1)
-            Spacer()
-            if let hk = preset.hotkey {
-                Text(shortcutString(hk))
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 1)
-                    .background(.thickMaterial, in: RoundedRectangle(cornerRadius: 4))
+                .frame(width: 16)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(preset.name)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                if let hk = preset.hotkey {
+                    Text(shortcutString(hk))
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("No shortcut")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                }
             }
+            Spacer(minLength: 0)
         }
+        .padding(.vertical, 2)
     }
 
     // MARK: - Detail
@@ -147,128 +277,103 @@ struct OpenRouterPane: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
-                header
+                PaneHeader(icon: "key.fill",
+                           title: "OpenRouter",
+                           subtitle: "Bring your own key. caip uses it for every action.")
+
                 AccessibilityStatusRow()
-                apiKeySection
-                defaultModelSection
+
+                Card("API Key", icon: "lock.shield") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        SecureField("sk-or-…", text: Binding(
+                            get: { store.apiKey },
+                            set: { store.updateAPIKey($0) }
+                        ))
+                        .textFieldStyle(.roundedBorder)
+                        .controlSize(.large)
+                        Text("Stored in this app's preferences. Get a key at openrouter.ai/keys.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Card("Default Model", icon: "cpu") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Picker("Model", selection: Binding(
+                            get: { store.defaultModel },
+                            set: { store.updateDefaultModel($0) }
+                        )) {
+                            if !models.contains(where: { $0.id == store.defaultModel }) {
+                                Text(store.defaultModel).tag(store.defaultModel)
+                            }
+                            ForEach(filtered) { m in
+                                Text(modelMenuLabel(m, sort: sort)).tag(m.id)
+                            }
+                        }
+                        .controlSize(.large)
+                        .labelsHidden()
+
+                        HStack(spacing: 8) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "magnifyingglass").foregroundStyle(.tertiary)
+                                TextField("Search models", text: $filter)
+                                    .textFieldStyle(.plain)
+                                if !filter.isEmpty {
+                                    Button { filter = "" } label: {
+                                        Image(systemName: "xmark.circle.fill")
+                                            .foregroundStyle(.tertiary)
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 5)
+                            .background(Color(NSColor.controlBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
+                            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.primary.opacity(0.08)))
+
+                            Menu {
+                                Picker("Sort by", selection: $sort) {
+                                    ForEach(ModelSort.allCases) { s in
+                                        Text(s.title).tag(s)
+                                    }
+                                }
+                            } label: {
+                                Label(sort.title, systemImage: "arrow.up.arrow.down")
+                                    .font(.caption)
+                            }
+                            .menuStyle(.borderlessButton)
+                            .fixedSize()
+
+                            Button { reload() } label: {
+                                Image(systemName: "arrow.clockwise")
+                                    .symbolEffect(.rotate, options: modelsLoading ? .repeat(.continuous) : .nonRepeating)
+                            }
+                            .buttonStyle(.borderless)
+                            .help("Refresh models list")
+                        }
+
+                        Group {
+                            if let err = modelsError {
+                                Label(err, systemImage: "exclamationmark.triangle")
+                                    .foregroundStyle(.red)
+                            } else if modelsLoading {
+                                HStack(spacing: 6) {
+                                    ProgressView().controlSize(.small)
+                                    Text("Loading…")
+                                }
+                            } else {
+                                Text("\(models.count) models. Price shown as $/1M tokens (in / out).")
+                            }
+                        }
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
+                }
             }
             .padding(28)
-            .frame(maxWidth: 560, alignment: .leading)
+            .frame(maxWidth: 580, alignment: .leading)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-    }
-
-    private var header: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "key.fill")
-                .font(.system(size: 28))
-                .foregroundStyle(.tint)
-                .symbolRenderingMode(.hierarchical)
-                .padding(10)
-                .background(.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
-            VStack(alignment: .leading, spacing: 2) {
-                Text("OpenRouter").font(.title2.weight(.semibold))
-                Text("Bring your own key. caip uses it for every action.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-        }
-    }
-
-    private var apiKeySection: some View {
-        GroupBox(label: Label("API Key", systemImage: "key").labelStyle(.titleOnly).font(.headline)) {
-            VStack(alignment: .leading, spacing: 8) {
-                SecureField("sk-or-…", text: Binding(
-                    get: { store.apiKey },
-                    set: { store.updateAPIKey($0) }
-                ))
-                .textFieldStyle(.roundedBorder)
-                .controlSize(.large)
-                HStack(spacing: 4) {
-                    Image(systemName: "lock.shield").imageScale(.small)
-                    Text("Stored in this app's preferences. Get a key at openrouter.ai/keys.")
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            }
-            .padding(.vertical, 4)
-        }
-    }
-
-    private var defaultModelSection: some View {
-        GroupBox(label: Label("Default Model", systemImage: "cpu").labelStyle(.titleOnly).font(.headline)) {
-            VStack(alignment: .leading, spacing: 10) {
-                Picker("Model", selection: Binding(
-                    get: { store.defaultModel },
-                    set: { store.updateDefaultModel($0) }
-                )) {
-                    if !models.contains(where: { $0.id == store.defaultModel }) {
-                        Text(store.defaultModel).tag(store.defaultModel)
-                    }
-                    ForEach(filtered) { m in
-                        Text(modelMenuLabel(m, sort: sort)).tag(m.id)
-                    }
-                }
-                .controlSize(.large)
-                .labelsHidden()
-
-                HStack(spacing: 8) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "magnifyingglass").foregroundStyle(.tertiary)
-                        TextField("Search models", text: $filter)
-                            .textFieldStyle(.plain)
-                        if !filter.isEmpty {
-                            Button { filter = "" } label: {
-                                Image(systemName: "xmark.circle.fill")
-                                    .foregroundStyle(.tertiary)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
-                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
-
-                    Menu {
-                        Picker("Sort by", selection: $sort) {
-                            ForEach(ModelSort.allCases) { s in
-                                Text(s.title).tag(s)
-                            }
-                        }
-                    } label: {
-                        Label(sort.title, systemImage: "arrow.up.arrow.down")
-                            .font(.caption)
-                    }
-                    .menuStyle(.borderlessButton)
-                    .fixedSize()
-
-                    Button { reload() } label: {
-                        Image(systemName: "arrow.clockwise")
-                            .symbolEffect(.rotate, options: modelsLoading ? .repeat(.continuous) : .nonRepeating)
-                    }
-                    .buttonStyle(.borderless)
-                    .help("Refresh models list")
-                }
-
-                Group {
-                    if let err = modelsError {
-                        Label(err, systemImage: "exclamationmark.triangle")
-                            .foregroundStyle(.red)
-                    } else if modelsLoading {
-                        HStack(spacing: 6) {
-                            ProgressView().controlSize(.small)
-                            Text("Loading…")
-                        }
-                    } else {
-                        Text("\(models.count) models. Price shown as $/1M tokens (in / out).")
-                    }
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            }
-            .padding(.vertical, 4)
-        }
     }
 
     private var filtered: [OpenRouterModel] {
@@ -290,44 +395,42 @@ struct PresetPane: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                header
+            VStack(alignment: .leading, spacing: 22) {
+                PaneHeader(icon: "sparkle",
+                           title: preset.name.isEmpty ? "New Action" : preset.name,
+                           subtitle: preset.hotkey.map { shortcutString($0) } ?? "No shortcut yet")
 
-                GroupBox(label: Label("Title", systemImage: "textformat").labelStyle(.titleOnly).font(.headline)) {
+                Card("Title", icon: "textformat") {
                     TextField("Name", text: $preset.name)
                         .textFieldStyle(.roundedBorder)
                         .controlSize(.large)
                 }
 
-                GroupBox(label: Label("Prompt", systemImage: "text.alignleft").labelStyle(.titleOnly).font(.headline)) {
+                Card("Prompt", icon: "text.alignleft") {
                     VStack(alignment: .leading, spacing: 6) {
                         TextEditor(text: $preset.prompt)
                             .font(.system(.body, design: .monospaced))
                             .frame(minHeight: 180)
+                            .scrollContentBackground(.hidden)
                             .padding(8)
-                            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
-                            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.secondary.opacity(0.15)))
-                        HStack(spacing: 4) {
-                            Image(systemName: "info.circle").imageScale(.small)
-                            Text("Use `{selectedText}` or `{s}` to insert the selected text.")
-                        }
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                            .background(Color(NSColor.textBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
+                            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.primary.opacity(0.10)))
+                        Text("Use `{selectedText}` or `{s}` to insert the selected text.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
-                    .padding(.vertical, 4)
                 }
 
-                GroupBox(label: Label("Shortcut", systemImage: "keyboard").labelStyle(.titleOnly).font(.headline)) {
+                Card("Shortcut", icon: "keyboard") {
                     HStack {
                         HotkeyRecorder(hotkey: $preset.hotkey)
-                            .frame(width: 260, height: 28)
+                            .frame(width: 260, height: 30)
                         Spacer()
                     }
-                    .padding(.vertical, 4)
                 }
             }
             .padding(28)
-            .frame(maxWidth: 600, alignment: .leading)
+            .frame(maxWidth: 580, alignment: .leading)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .toolbar {
@@ -337,29 +440,6 @@ struct PresetPane: View {
                 }
                 .help("Delete this action")
             }
-        }
-    }
-
-    private var header: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "sparkle")
-                .font(.system(size: 28))
-                .foregroundStyle(.tint)
-                .symbolRenderingMode(.hierarchical)
-                .padding(10)
-                .background(.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
-            VStack(alignment: .leading, spacing: 2) {
-                Text(preset.name.isEmpty ? "New Action" : preset.name)
-                    .font(.title2.weight(.semibold))
-                if let hk = preset.hotkey {
-                    Text(shortcutString(hk))
-                        .font(.system(size: 12, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text("No shortcut yet").foregroundStyle(.secondary).font(.callout)
-                }
-            }
-            Spacer()
         }
     }
 }
@@ -372,44 +452,37 @@ struct AccessibilityStatusRow: View {
     @State private var showingResetHint = false
 
     var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: trusted ? "checkmark.shield.fill" : "exclamationmark.shield.fill")
-                .font(.system(size: 20))
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(trusted ? .green : .orange)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(trusted ? "Accessibility access granted" : "Accessibility access required")
-                    .font(.headline)
-                Text(trusted
-                     ? "caip can read your selection and paste results."
-                     : "caip needs this to send ⌘C and ⌘V on your behalf.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+        CalloutCard(tint: trusted ? .green : .orange) {
+            HStack(spacing: 12) {
+                Image(systemName: trusted ? "checkmark.shield.fill" : "exclamationmark.shield.fill")
+                    .font(.system(size: 20))
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(trusted ? .green : .orange)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(trusted ? "Accessibility access granted" : "Accessibility access required")
+                        .font(.headline)
+                    Text(trusted
+                         ? "caip can read your selection and paste results."
+                         : "caip needs this to send ⌘C and ⌘V on your behalf.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if !trusted {
+                    Button("Open Settings") { openAccessibilityPane() }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.regular)
+                }
+                Menu {
+                    Button("Re-check") { recheck() }
+                    Button("Reset & re-grant…") { showingResetHint = true }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
             }
-            Spacer()
-            if !trusted {
-                Button("Open Settings") { openAccessibilityPane() }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.regular)
-            }
-            Menu {
-                Button("Re-check") { recheck() }
-                Button("Reset & re-grant…") { showingResetHint = true }
-            } label: {
-                Image(systemName: "ellipsis.circle")
-            }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
         }
-        .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(trusted ? Color.green.opacity(0.08) : Color.orange.opacity(0.08))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .strokeBorder((trusted ? Color.green : Color.orange).opacity(0.25), lineWidth: 1)
-        )
         .onAppear { startPolling() }
         .onDisappear { stopPolling() }
         .alert("Reset Accessibility entry?", isPresented: $showingResetHint) {
