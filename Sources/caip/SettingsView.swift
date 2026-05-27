@@ -120,6 +120,9 @@ struct SettingsView: View {
         .onChange(of: store.apiKey) { _, _ in
             Task { await loadModels() }
         }
+        .onChange(of: store.baseURL) { _, _ in
+            Task { await loadModels() }
+        }
     }
 
     // MARK: - Sidebar
@@ -239,7 +242,7 @@ struct SettingsView: View {
         modelsLoading = true
         modelsError = nil
         do {
-            let list = try await OpenRouter.listModels(apiKey: store.apiKey)
+            let list = try await OpenRouter.listModels(baseURL: store.baseURL, apiKey: store.apiKey)
             self.models = list.sorted { ($0.name ?? $0.id) < ($1.name ?? $1.id) }
             self.modelsLoading = false
         } catch {
@@ -264,23 +267,72 @@ struct OpenRouterPane: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
-                PaneHeader(icon: "key.fill",
-                           title: "OpenRouter",
-                           subtitle: "Bring your own key. caip uses it for every action.")
+                PaneHeader(icon: "bolt.horizontal.fill",
+                           title: "Service",
+                           subtitle: "Cloud or local. Any OpenAI-compatible endpoint.")
 
                 AccessibilityStatusRow()
 
-                Card("API Key", icon: "lock.shield") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        SecureField("sk-or-…", text: Binding(
-                            get: { store.apiKey },
-                            set: { store.updateAPIKey($0) }
-                        ))
-                        .textFieldStyle(.roundedBorder)
-                        .controlSize(.large)
-                        Text("Stored in this app's preferences. Get a key at openrouter.ai/keys.")
+                LaunchAtLoginCard()
+
+                Card("Provider", icon: "server.rack") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Picker("Provider", selection: Binding(
+                            get: { store.preset },
+                            set: { store.updateServicePreset($0) }
+                        )) {
+                            ForEach(ServicePreset.allCases) { p in
+                                Label(p.title, systemImage: p.symbol).tag(p)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+
+                        Text(store.preset.subtitle)
                             .font(.caption)
                             .foregroundStyle(.secondary)
+
+                        HStack(spacing: 8) {
+                            Text("Base URL")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .frame(width: 70, alignment: .leading)
+                            TextField("https://example.com/v1", text: Binding(
+                                get: { store.baseURL },
+                                set: { store.updateBaseURL($0) }
+                            ))
+                            .textFieldStyle(.roundedBorder)
+                            .disableAutocorrection(true)
+                            .textCase(.lowercase)
+                        }
+                    }
+                }
+
+                if store.preset.needsAPIKey || store.preset == .custom {
+                    Card(store.preset == .openRouter ? "OpenRouter API Key" : "API Key (optional)",
+                         icon: "lock.shield") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            SecureField(store.preset == .openRouter ? "sk-or-…" : "leave blank if not needed",
+                                        text: Binding(
+                                            get: { store.apiKey },
+                                            set: { store.updateAPIKey($0) }
+                                        ))
+                            .textFieldStyle(.roundedBorder)
+                            .controlSize(.large)
+                            Text(apiKeyHint)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                } else {
+                    Card("API Key", icon: "lock.shield") {
+                        HStack(spacing: 8) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                            Text("Not needed for \(store.preset.title) — caip talks to the local server directly.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
 
@@ -361,6 +413,17 @@ struct OpenRouterPane: View {
             .frame(maxWidth: 580, alignment: .leading)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private var apiKeyHint: String {
+        switch store.preset {
+        case .openRouter:
+            return "Get a key at openrouter.ai/keys."
+        case .custom:
+            return "Provide one if your endpoint requires Bearer auth."
+        case .ollama, .lmStudio, .jan:
+            return "Optional. Most local servers don't require a key."
+        }
     }
 
     private var filtered: [OpenRouterModel] {
@@ -512,6 +575,55 @@ struct AccessibilityStatusRow: View {
     private func stopPolling() {
         timer?.invalidate()
         timer = nil
+    }
+}
+
+struct LaunchAtLoginCard: View {
+    @State private var enabled = LoginItem.isEnabled
+    @State private var status = LoginItem.statusDescription
+    @State private var timer: Timer?
+
+    var body: some View {
+        Card("Startup", icon: "power.circle") {
+            HStack(spacing: 12) {
+                Image(systemName: enabled ? "power.circle.fill" : "power.circle")
+                    .font(.system(size: 18))
+                    .foregroundStyle(enabled ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+                    .symbolRenderingMode(.hierarchical)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Launch at Login")
+                        .font(.system(size: 13, weight: .medium))
+                    Text(status)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Toggle("", isOn: Binding(
+                    get: { enabled },
+                    set: { newValue in
+                        LoginItem.setEnabled(newValue)
+                        refresh()
+                    }
+                ))
+                .labelsHidden()
+                .toggleStyle(.switch)
+            }
+        }
+        .onAppear {
+            refresh()
+            timer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { _ in
+                DispatchQueue.main.async { refresh() }
+            }
+        }
+        .onDisappear {
+            timer?.invalidate()
+            timer = nil
+        }
+    }
+
+    private func refresh() {
+        enabled = LoginItem.isEnabled
+        status = LoginItem.statusDescription
     }
 }
 

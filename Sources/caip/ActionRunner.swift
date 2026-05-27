@@ -43,7 +43,12 @@ final class ActionRunner {
                        tint: .orange)
             return
         case .success(let selection):
-            await run(preset: preset, selection: selection, apiKey: store.apiKey, model: store.defaultModel)
+            await run(preset: preset,
+                      selection: selection,
+                      apiKey: store.apiKey,
+                      baseURL: store.baseURL,
+                      requireKey: store.preset.needsAPIKey,
+                      model: store.defaultModel)
         }
     }
 
@@ -53,7 +58,12 @@ final class ActionRunner {
         case copyFailed
     }
 
-    private func run(preset: Preset, selection: String, apiKey: String, model: String) async {
+    private func run(preset: Preset,
+                     selection: String,
+                     apiKey: String,
+                     baseURL: String,
+                     requireKey: Bool,
+                     model: String) async {
 
         let prompt = preset.prompt
             .replacingOccurrences(of: "{selectedText}", with: selection)
@@ -61,7 +71,13 @@ final class ActionRunner {
 
         showStatus("⌛")
         do {
-            let result = try await OpenRouter.complete(prompt: prompt, model: model, apiKey: apiKey)
+            let result = try await OpenRouter.complete(
+                prompt: prompt,
+                model: model,
+                baseURL: baseURL,
+                apiKey: apiKey,
+                requireKey: requireKey
+            )
             paste(text: result.trimmingCharacters(in: .whitespacesAndNewlines))
             showStatus("✓")
         } catch {

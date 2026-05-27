@@ -10,12 +10,16 @@ final class PresetStore {
     var presets: [Preset] = []
     var apiKey: String = ""
     var defaultModel: String = "openrouter/auto"
+    var preset: ServicePreset = .openRouter
+    var baseURL: String = ServicePreset.openRouter.defaultBaseURL
 
     @ObservationIgnored var onChange: (() -> Void)?
 
     @ObservationIgnored private let fileURL: URL
     @ObservationIgnored private let defaultModelKey = "caip.defaultModel"
     @ObservationIgnored private let apiKeyKey = "caip.openrouterApiKey"
+    @ObservationIgnored private let presetKey = "caip.servicePreset"
+    @ObservationIgnored private let baseURLKey = "caip.serviceBaseURL"
 
     init() {
         let fm = FileManager.default
@@ -26,6 +30,14 @@ final class PresetStore {
         if let saved = UserDefaults.standard.string(forKey: defaultModelKey), !saved.isEmpty {
             self.defaultModel = saved
         }
+        if let rawPreset = UserDefaults.standard.string(forKey: presetKey),
+           let p = ServicePreset(rawValue: rawPreset) {
+            self.preset = p
+            self.baseURL = p.defaultBaseURL
+        }
+        if let savedURL = UserDefaults.standard.string(forKey: baseURLKey), !savedURL.isEmpty {
+            self.baseURL = savedURL
+        }
         load()
         if let stored = UserDefaults.standard.string(forKey: apiKeyKey) {
             apiKey = stored
@@ -33,6 +45,19 @@ final class PresetStore {
             apiKey = legacy
             UserDefaults.standard.set(legacy, forKey: apiKeyKey)
         }
+    }
+
+    func updateServicePreset(_ value: ServicePreset, autoApplyBaseURL: Bool = true) {
+        preset = value
+        UserDefaults.standard.set(value.rawValue, forKey: presetKey)
+        if autoApplyBaseURL && value != .custom {
+            updateBaseURL(value.defaultBaseURL)
+        }
+    }
+
+    func updateBaseURL(_ value: String) {
+        baseURL = value
+        UserDefaults.standard.set(value, forKey: baseURLKey)
     }
 
     func updateDefaultModel(_ value: String) {
