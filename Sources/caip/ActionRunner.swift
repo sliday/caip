@@ -107,25 +107,11 @@ final class ActionRunner {
         let pb = NSPasteboard.general
         pb.clearContents()
         pb.setString(text, forType: .string)
-        // small delay before paste keystroke
+        // Small delay so the focused app sees the new pasteboard before ⌘V fires.
         usleep(40_000)
         sendCommand(keyCode: CGKeyCode(kVK_ANSI_V))
-
-        // restore previous pasteboard after a short delay
-        let snapshot = Self.savedSnapshot
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-            guard !snapshot.isEmpty else { return }
-            let pb = NSPasteboard.general
-            pb.clearContents()
-            let items: [NSPasteboardItem] = snapshot.map { dict in
-                let item = NSPasteboardItem()
-                for (type, data) in dict {
-                    item.setData(data, forType: type)
-                }
-                return item
-            }
-            pb.writeObjects(items)
-        }
+        // Leave the AI result on the clipboard — user often wants to paste it again
+        // elsewhere or keep it for reference. The pre-action clipboard is gone by design.
     }
 
     private func sendCommand(keyCode: CGKeyCode) {
