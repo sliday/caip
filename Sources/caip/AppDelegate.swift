@@ -39,7 +39,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     static func requestAccessibility() {
-        let opts: NSDictionary = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
+        let key = "AXTrustedCheckOptionPrompt"
+        let opts: NSDictionary = [key: true]
         _ = AXIsProcessTrustedWithOptions(opts)
     }
 
@@ -59,13 +60,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func openSettings() {
         if settingsWindow == nil {
-            let root = SettingsView().environmentObject(store)
+            let root = SettingsView().environment(store)
             let host = NSHostingController(rootView: root)
             let win = NSWindow(contentViewController: host)
-            win.setContentSize(NSSize(width: 540, height: 460))
-            win.styleMask = [.titled, .closable, .miniaturizable]
+            win.setContentSize(NSSize(width: 820, height: 560))
+            win.styleMask = [.titled, .closable, .resizable, .miniaturizable, .fullSizeContentView]
             win.title = "Copy · AI · Paste"
-            win.titlebarAppearsTransparent = false
+            win.titlebarAppearsTransparent = true
+            win.titleVisibility = .visible
+            win.toolbarStyle = .unified
             win.center()
             win.isReleasedWhenClosed = false
             settingsWindow = win

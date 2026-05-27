@@ -1,19 +1,21 @@
 import Foundation
-import Combine
+import Observation
 import AppKit
 
+@Observable
 @MainActor
-final class PresetStore: ObservableObject {
+final class PresetStore {
     static let shared = PresetStore()
 
-    @Published var presets: [Preset] = []
-    @Published var apiKey: String = ""
-    @Published var defaultModel: String = "openrouter/auto"
-    var onChange: (() -> Void)?
+    var presets: [Preset] = []
+    var apiKey: String = ""
+    var defaultModel: String = "openrouter/auto"
 
-    private let fileURL: URL
-    private let defaultModelKey = "caip.defaultModel"
-    private let apiKeyKey = "caip.openrouterApiKey"
+    @ObservationIgnored var onChange: (() -> Void)?
+
+    @ObservationIgnored private let fileURL: URL
+    @ObservationIgnored private let defaultModelKey = "caip.defaultModel"
+    @ObservationIgnored private let apiKeyKey = "caip.openrouterApiKey"
 
     init() {
         let fm = FileManager.default
@@ -64,10 +66,11 @@ final class PresetStore: ObservableObject {
         }
     }
 
-    func addPreset() {
+    func addPreset() -> Preset {
         let preset = Preset(name: "New Action", prompt: Preset.defaultPrompt, model: defaultModel, hotkey: nil)
         presets.append(preset)
         save()
+        return preset
     }
 
     func remove(_ preset: Preset) {

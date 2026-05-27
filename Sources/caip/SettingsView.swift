@@ -1,295 +1,121 @@
 import SwiftUI
 
-enum SettingsTab: Hashable {
-    case actions
-    case apiKey
-}
-
-struct EditorTarget: Identifiable, Equatable {
-    let id: UUID
-}
-
-enum ModelSort: String, CaseIterable, Identifiable {
-    case name, priceAsc, contextDesc, newest
-    var id: String { rawValue }
-    var title: String {
-        switch self {
-        case .name: return "Name"
-        case .priceAsc: return "Price (low → high)"
-        case .contextDesc: return "Context (large → small)"
-        case .newest: return "Newest"
-        }
-    }
-}
-
-func sortModels(_ models: [OpenRouterModel], by mode: ModelSort) -> [OpenRouterModel] {
-    switch mode {
-    case .name:
-        return models.sorted { ($0.name ?? $0.id).localizedCaseInsensitiveCompare($1.name ?? $1.id) == .orderedAscending }
-    case .priceAsc:
-        return models.sorted {
-            (($0.combinedPrice ?? .greatestFiniteMagnitude),
-             ($0.name ?? $0.id)) <
-            (($1.combinedPrice ?? .greatestFiniteMagnitude),
-             ($1.name ?? $1.id))
-        }
-    case .contextDesc:
-        return models.sorted { ($0.contextLength ?? 0) > ($1.contextLength ?? 0) }
-    case .newest:
-        return models.sorted { ($0.createdAt ?? 0) > ($1.createdAt ?? 0) }
-    }
-}
-
-func describePrice(_ m: OpenRouterModel) -> String {
-    guard let p = m.promptPrice, let c = m.completionPrice else { return "—" }
-    // Display per 1M tokens: $X in / $Y out
-    let inUSD = p * 1_000_000
-    let outUSD = c * 1_000_000
-    return String(format: "$%.2f / $%.2f / 1M", inUSD, outUSD)
-}
-
-func describeContext(_ m: OpenRouterModel) -> String {
-    guard let ctx = m.contextLength, ctx > 0 else { return "—" }
-    if ctx >= 1_000_000 { return String(format: "%.1fM", Double(ctx) / 1_000_000) }
-    if ctx >= 1_000 { return "\(ctx / 1000)k" }
-    return "\(ctx)"
-}
-
-func modelMenuLabel(_ m: OpenRouterModel, sort: ModelSort) -> String {
-    let base = m.name ?? m.id
-    switch sort {
-    case .name:
-        return base
-    case .priceAsc:
-        return "\(base)  ·  \(describePrice(m))"
-    case .contextDesc:
-        return "\(base)  ·  \(describeContext(m)) ctx"
-    case .newest:
-        return base
-    }
+enum SettingsPane: Hashable {
+    case openRouter
+    case preset(UUID)
 }
 
 struct SettingsView: View {
-    @EnvironmentObject var store: PresetStore
+    @Environment(PresetStore.self) private var store
+    @State private var selection: SettingsPane? = .openRouter
     @State private var models: [OpenRouterModel] = []
     @State private var modelsLoading = false
     @State private var modelsError: String?
-    @State private var search = ""
-    @State private var editorTarget: EditorTarget?
-    @State private var defaultModelFilter = ""
-    @State private var defaultModelSort: ModelSort = .name
 
     var body: some View {
-        TabView {
-            actionsTab
-                .padding(20)
-                .tabItem { Label("Actions", systemImage: "bolt.fill") }
-
-            openRouterTab
-                .padding(20)
-                .tabItem { Label("OpenRouter", systemImage: "network") }
+        NavigationSplitView(columnVisibility: .constant(.all)) {
+            sidebar
+                .navigationSplitViewColumnWidth(min: 220, ideal: 240, max: 280)
+        } detail: {
+            detail
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(width: 540, height: 460)
+        .frame(minWidth: 780, minHeight: 520)
         .task { await loadModels() }
-        .sheet(item: $editorTarget) { target in
-            if let idx = store.presets.firstIndex(where: { $0.id == target.id }) {
-                PresetEditor(preset: bindingForPreset(at: idx),
-                             onClose: { editorTarget = nil },
-                             onDelete: {
-                                 if let p = store.presets.first(where: { $0.id == target.id }) {
-                                     store.remove(p)
-                                 }
-                                 editorTarget = nil
-                             })
-                .environmentObject(store)
-                .frame(minWidth: 540, minHeight: 540)
-            } else {
-                VStack {
-                    Text("Action no longer exists.").foregroundStyle(.secondary)
-                    Button("Close") { editorTarget = nil }
+        .onChange(of: store.apiKey) { _, _ in
+            Task { await loadModels() }
+        }
+    }
+
+    // MARK: - Sidebar
+
+    private var sidebar: some View {
+        List(selection: $selection) {
+            Section {
+                Label("OpenRouter", systemImage: "key.fill")
+                    .symbolRenderingMode(.hierarchical)
+                    .tag(SettingsPane.openRouter)
+            } header: {
+                Text("Service")
+            }
+
+            Section {
+                ForEach(store.presets) { preset in
+                    sidebarRow(preset)
+                        .tag(SettingsPane.preset(preset.id))
                 }
-                .padding(40)
+            } header: {
+                HStack {
+                    Text("Actions")
+                    Spacer()
+                    Button {
+                        let new = store.addPreset()
+                        selection = .preset(new.id)
+                    } label: {
+                        Image(systemName: "plus")
+                            .imageScale(.small)
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Add Action")
+                }
             }
         }
-    }
-
-    // MARK: - Actions tab
-
-    private var actionsTab: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            listHeader
-            ScrollView {
-                actionList
-                    .padding(.bottom, 4)
-            }
-        }
-    }
-
-    private var listHeader: some View {
-        HStack(spacing: 8) {
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(.tertiary)
-                TextField("Search", text: $search)
-                    .textFieldStyle(.plain)
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5)
-            .background(RoundedRectangle(cornerRadius: 6).fill(Color(NSColor.controlBackgroundColor)))
-            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color(NSColor.separatorColor)))
-
-            Spacer()
-            Button {
-                let new = Preset(name: "New Action", prompt: Preset.defaultPrompt, model: store.defaultModel, hotkey: nil)
-                store.presets.append(new)
-                store.save()
-                editorTarget = EditorTarget(id: new.id)
-            } label: {
-                Label("Add Action", systemImage: "plus")
-            }
-            .controlSize(.regular)
-        }
-    }
-
-    private var filteredPresets: [Preset] {
-        guard !search.isEmpty else { return store.presets }
-        let q = search.lowercased()
-        return store.presets.filter {
-            $0.name.lowercased().contains(q) || $0.model.lowercased().contains(q)
-        }
+        .listStyle(.sidebar)
     }
 
     @ViewBuilder
-    private var actionList: some View {
-        if filteredPresets.isEmpty {
-            HStack {
-                Spacer()
-                VStack(spacing: 6) {
-                    Image(systemName: "tray").font(.title)
-                        .foregroundStyle(.secondary)
-                    Text(store.presets.isEmpty ? "No actions yet. Click Create Action."
-                                               : "No matches for \"\(search)\"")
-                        .foregroundStyle(.secondary)
-                        .font(.callout)
-                }
-                Spacer()
-            }
-            .padding(.vertical, 30)
-        } else {
-            VStack(spacing: 8) {
-                ForEach(filteredPresets) { preset in
-                    ActionRow(preset: preset) {
-                        editorTarget = EditorTarget(id: preset.id)
-                    }
-                }
-            }
-        }
-    }
-
-    // MARK: - OpenRouter tab
-
-    private var openRouterTab: some View {
-        Form {
-            Section {
-                AccessibilityStatusRow()
-            } header: {
-                Text("Permissions")
-            }
-
-            Section {
-                SecureField("API Key", text: Binding(
-                    get: { store.apiKey },
-                    set: { store.updateAPIKey($0) }
-                ))
-            } header: {
-                Text("API Key")
-            } footer: {
-                Text("Stored in this app's preferences. Get a key at openrouter.ai/keys.")
-                    .font(.caption)
+    private func sidebarRow(_ preset: Preset) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "sparkle")
+                .foregroundStyle(.tint)
+                .symbolRenderingMode(.hierarchical)
+            Text(preset.name).lineLimit(1)
+            Spacer()
+            if let hk = preset.hotkey {
+                Text(shortcutString(hk))
+                    .font(.system(size: 10, design: .monospaced))
                     .foregroundStyle(.secondary)
-            }
-            Section {
-                Picker("Model", selection: Binding(
-                    get: { store.defaultModel },
-                    set: { store.updateDefaultModel($0) }
-                )) {
-                    if !models.contains(where: { $0.id == store.defaultModel }) {
-                        Text(store.defaultModel).tag(store.defaultModel)
-                    }
-                    ForEach(filteredDefaultModels) { m in
-                        Text(modelMenuLabel(m, sort: defaultModelSort)).tag(m.id)
-                    }
-                }
-
-                HStack(spacing: 8) {
-                    Image(systemName: "magnifyingglass")
-                        .foregroundStyle(.tertiary)
-                    TextField("Search models", text: $defaultModelFilter)
-                        .textFieldStyle(.plain)
-                    if !defaultModelFilter.isEmpty {
-                        Button { defaultModelFilter = "" } label: {
-                            Image(systemName: "xmark.circle.fill").foregroundStyle(.tertiary)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    Divider().frame(height: 16)
-                    Menu {
-                        Picker("Sort by", selection: $defaultModelSort) {
-                            ForEach(ModelSort.allCases) { s in
-                                Text(s.title).tag(s)
-                            }
-                        }
-                    } label: {
-                        Label("Sort: \(defaultModelSort.title)", systemImage: "arrow.up.arrow.down")
-                            .font(.caption)
-                    }
-                    .menuStyle(.borderlessButton)
-                    .fixedSize()
-                    Button {
-                        Task { await loadModels() }
-                    } label: {
-                        Image(systemName: "arrow.clockwise")
-                    }
-                    .buttonStyle(.borderless)
-                    .help("Refresh models list")
-                }
-            } header: {
-                Text("Default Model")
-            } footer: {
-                VStack(alignment: .leading, spacing: 2) {
-                    if modelsLoading {
-                        HStack { ProgressView().controlSize(.small); Text("Loading…") }
-                    } else if let err = modelsError {
-                        Text(err).foregroundStyle(.red)
-                    } else {
-                        Text("\(models.count) models. Price shown as $/1M tokens (in / out).")
-                    }
-                    Text("This model is used for every action.")
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(.thickMaterial, in: RoundedRectangle(cornerRadius: 4))
             }
         }
-        .formStyle(.grouped)
-        .padding(.top, 4)
     }
 
-    private var filteredDefaultModels: [OpenRouterModel] {
-        var list = models
-        if !defaultModelFilter.isEmpty {
-            let q = defaultModelFilter.lowercased()
-            list = list.filter { ($0.name ?? "").lowercased().contains(q) || $0.id.lowercased().contains(q) }
+    // MARK: - Detail
+
+    @ViewBuilder
+    private var detail: some View {
+        switch selection {
+        case .openRouter, .none:
+            OpenRouterPane(models: $models,
+                           modelsLoading: $modelsLoading,
+                           modelsError: $modelsError,
+                           reload: { Task { await loadModels() } })
+        case .preset(let id):
+            if let idx = store.presets.firstIndex(where: { $0.id == id }) {
+                PresetPane(preset: bindingForPreset(at: idx),
+                           onDelete: { deletePreset(id: id) })
+                    .id(id)
+            } else {
+                ContentUnavailableView("Action removed",
+                                       systemImage: "tray",
+                                       description: Text("Select an item from the sidebar."))
+            }
         }
-        return sortModels(list, by: defaultModelSort)
     }
-
-    // MARK: - helpers
 
     private func bindingForPreset(at index: Int) -> Binding<Preset> {
         Binding(
             get: { store.presets[index] },
             set: { store.update($0) }
         )
+    }
+
+    private func deletePreset(id: UUID) {
+        guard let preset = store.presets.first(where: { $0.id == id }) else { return }
+        store.remove(preset)
+        selection = .openRouter
     }
 
     private func loadModels() async {
@@ -306,62 +132,239 @@ struct SettingsView: View {
     }
 }
 
-// MARK: - Row
+// MARK: - OpenRouter pane
 
-struct ActionRow: View {
-    let preset: Preset
-    let onOpen: () -> Void
-    @State private var hover = false
+struct OpenRouterPane: View {
+    @Environment(PresetStore.self) private var store
+    @Binding var models: [OpenRouterModel]
+    @Binding var modelsLoading: Bool
+    @Binding var modelsError: String?
+    let reload: () -> Void
+
+    @State private var filter = ""
+    @State private var sort: ModelSort = .name
 
     var body: some View {
-        Button(action: onOpen) {
-            HStack(spacing: 10) {
-                Image(systemName: "sparkle")
-                    .foregroundStyle(.tint)
-                    .frame(width: 18)
-                Text(preset.name)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.primary)
-                Spacer()
-                shortcutBadge
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.tertiary)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                header
+                AccessibilityStatusRow()
+                apiKeySection
+                defaultModelSection
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .contentShape(Rectangle())
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(hover
-                          ? Color(NSColor.controlBackgroundColor).opacity(0.7)
-                          : Color(NSColor.controlBackgroundColor))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(Color(NSColor.separatorColor), lineWidth: 0.5)
-            )
+            .padding(28)
+            .frame(maxWidth: 560, alignment: .leading)
         }
-        .buttonStyle(.plain)
-        .onHover { hover = $0 }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
-    @ViewBuilder
-    private var shortcutBadge: some View {
-        if let hk = preset.hotkey {
-            Text(shortcutString(hk))
-                .font(.system(size: 11, design: .monospaced))
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(RoundedRectangle(cornerRadius: 5).fill(Color(NSColor.windowBackgroundColor)))
-                .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color(NSColor.separatorColor)))
-        } else {
-            Text("No shortcut")
-                .font(.system(size: 11))
-                .foregroundStyle(.tertiary)
+    private var header: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "key.fill")
+                .font(.system(size: 28))
+                .foregroundStyle(.tint)
+                .symbolRenderingMode(.hierarchical)
+                .padding(10)
+                .background(.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+            VStack(alignment: .leading, spacing: 2) {
+                Text("OpenRouter").font(.title2.weight(.semibold))
+                Text("Bring your own key. caip uses it for every action.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+        }
+    }
+
+    private var apiKeySection: some View {
+        GroupBox(label: Label("API Key", systemImage: "key").labelStyle(.titleOnly).font(.headline)) {
+            VStack(alignment: .leading, spacing: 8) {
+                SecureField("sk-or-…", text: Binding(
+                    get: { store.apiKey },
+                    set: { store.updateAPIKey($0) }
+                ))
+                .textFieldStyle(.roundedBorder)
+                .controlSize(.large)
+                HStack(spacing: 4) {
+                    Image(systemName: "lock.shield").imageScale(.small)
+                    Text("Stored in this app's preferences. Get a key at openrouter.ai/keys.")
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+            .padding(.vertical, 4)
+        }
+    }
+
+    private var defaultModelSection: some View {
+        GroupBox(label: Label("Default Model", systemImage: "cpu").labelStyle(.titleOnly).font(.headline)) {
+            VStack(alignment: .leading, spacing: 10) {
+                Picker("Model", selection: Binding(
+                    get: { store.defaultModel },
+                    set: { store.updateDefaultModel($0) }
+                )) {
+                    if !models.contains(where: { $0.id == store.defaultModel }) {
+                        Text(store.defaultModel).tag(store.defaultModel)
+                    }
+                    ForEach(filtered) { m in
+                        Text(modelMenuLabel(m, sort: sort)).tag(m.id)
+                    }
+                }
+                .controlSize(.large)
+                .labelsHidden()
+
+                HStack(spacing: 8) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "magnifyingglass").foregroundStyle(.tertiary)
+                        TextField("Search models", text: $filter)
+                            .textFieldStyle(.plain)
+                        if !filter.isEmpty {
+                            Button { filter = "" } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 6))
+
+                    Menu {
+                        Picker("Sort by", selection: $sort) {
+                            ForEach(ModelSort.allCases) { s in
+                                Text(s.title).tag(s)
+                            }
+                        }
+                    } label: {
+                        Label(sort.title, systemImage: "arrow.up.arrow.down")
+                            .font(.caption)
+                    }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+
+                    Button { reload() } label: {
+                        Image(systemName: "arrow.clockwise")
+                            .symbolEffect(.rotate, options: modelsLoading ? .repeat(.continuous) : .nonRepeating)
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Refresh models list")
+                }
+
+                Group {
+                    if let err = modelsError {
+                        Label(err, systemImage: "exclamationmark.triangle")
+                            .foregroundStyle(.red)
+                    } else if modelsLoading {
+                        HStack(spacing: 6) {
+                            ProgressView().controlSize(.small)
+                            Text("Loading…")
+                        }
+                    } else {
+                        Text("\(models.count) models. Price shown as $/1M tokens (in / out).")
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+            .padding(.vertical, 4)
+        }
+    }
+
+    private var filtered: [OpenRouterModel] {
+        var list = models
+        if !filter.isEmpty {
+            let q = filter.lowercased()
+            list = list.filter { ($0.name ?? "").lowercased().contains(q) || $0.id.lowercased().contains(q) }
+        }
+        return sortModels(list, by: sort)
+    }
+}
+
+// MARK: - Preset pane
+
+struct PresetPane: View {
+    @Binding var preset: Preset
+    let onDelete: () -> Void
+    @Environment(PresetStore.self) private var store
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                header
+
+                GroupBox(label: Label("Title", systemImage: "textformat").labelStyle(.titleOnly).font(.headline)) {
+                    TextField("Name", text: $preset.name)
+                        .textFieldStyle(.roundedBorder)
+                        .controlSize(.large)
+                }
+
+                GroupBox(label: Label("Prompt", systemImage: "text.alignleft").labelStyle(.titleOnly).font(.headline)) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        TextEditor(text: $preset.prompt)
+                            .font(.system(.body, design: .monospaced))
+                            .frame(minHeight: 180)
+                            .padding(8)
+                            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
+                            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(Color.secondary.opacity(0.15)))
+                        HStack(spacing: 4) {
+                            Image(systemName: "info.circle").imageScale(.small)
+                            Text("Use `{selectedText}` or `{s}` to insert the selected text.")
+                        }
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 4)
+                }
+
+                GroupBox(label: Label("Shortcut", systemImage: "keyboard").labelStyle(.titleOnly).font(.headline)) {
+                    HStack {
+                        HotkeyRecorder(hotkey: $preset.hotkey)
+                            .frame(width: 260, height: 28)
+                        Spacer()
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+            .padding(28)
+            .frame(maxWidth: 600, alignment: .leading)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .toolbar {
+            ToolbarItem(placement: .destructiveAction) {
+                Button(role: .destructive, action: onDelete) {
+                    Label("Delete", systemImage: "trash")
+                }
+                .help("Delete this action")
+            }
+        }
+    }
+
+    private var header: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "sparkle")
+                .font(.system(size: 28))
+                .foregroundStyle(.tint)
+                .symbolRenderingMode(.hierarchical)
+                .padding(10)
+                .background(.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(preset.name.isEmpty ? "New Action" : preset.name)
+                    .font(.title2.weight(.semibold))
+                if let hk = preset.hotkey {
+                    Text(shortcutString(hk))
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("No shortcut yet").foregroundStyle(.secondary).font(.callout)
+                }
+            }
+            Spacer()
         }
     }
 }
+
+// MARK: - Accessibility
 
 struct AccessibilityStatusRow: View {
     @State private var trusted: Bool = AccessibilityCheck.isGranted()
@@ -369,53 +372,51 @@ struct AccessibilityStatusRow: View {
     @State private var showingResetHint = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
-                Image(systemName: trusted ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
-                    .foregroundStyle(trusted ? .green : .orange)
-                    .imageScale(.large)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(trusted ? "Accessibility access granted" : "Accessibility access required")
-                        .font(.system(size: 13, weight: .medium))
-                    Text(trusted
-                         ? "caip can read your selection and paste results."
-                         : "caip needs this to send ⌘C and ⌘V on your behalf.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                if trusted {
-                    Button("Re-check") { recheck() }
-                        .controlSize(.small)
-                } else {
-                    Button("Open System Settings") {
-                        openAccessibilityPane()
-                    }
-                    Menu {
-                        Button("Re-check now") { recheck() }
-                        Divider()
-                        Button("Reset & re-grant…") { showingResetHint = true }
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
-                    }
-                    .menuStyle(.borderlessButton)
-                    .fixedSize()
-                }
-            }
-            if !trusted {
-                Text("If caip is already toggled on in the list but this still shows orange, the binary signature changed (ad-hoc rebuild). Use **Reset & re-grant** to clear and re-add.")
+        HStack(spacing: 12) {
+            Image(systemName: trusted ? "checkmark.shield.fill" : "exclamationmark.shield.fill")
+                .font(.system(size: 20))
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(trusted ? .green : .orange)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(trusted ? "Accessibility access granted" : "Accessibility access required")
+                    .font(.headline)
+                Text(trusted
+                     ? "caip can read your selection and paste results."
+                     : "caip needs this to send ⌘C and ⌘V on your behalf.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
             }
+            Spacer()
+            if !trusted {
+                Button("Open Settings") { openAccessibilityPane() }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.regular)
+            }
+            Menu {
+                Button("Re-check") { recheck() }
+                Button("Reset & re-grant…") { showingResetHint = true }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
         }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(trusted ? Color.green.opacity(0.08) : Color.orange.opacity(0.08))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder((trusted ? Color.green : Color.orange).opacity(0.25), lineWidth: 1)
+        )
         .onAppear { startPolling() }
         .onDisappear { stopPolling() }
         .alert("Reset Accessibility entry?", isPresented: $showingResetHint) {
             Button("Cancel", role: .cancel) {}
             Button("Reset", role: .destructive) { resetAndReopen() }
         } message: {
-            Text("This runs `tccutil reset Accessibility net.variant.caip` and reopens the Accessibility pane so you can re-add caip. macOS will prompt for your password.")
+            Text("Runs `tccutil reset Accessibility net.variant.caip` and reopens the Accessibility pane so you can re-add caip.")
         }
     }
 
@@ -436,9 +437,7 @@ struct AccessibilityStatusRow: View {
         openAccessibilityPane()
     }
 
-    private func recheck() {
-        trusted = AccessibilityCheck.isGranted()
-    }
+    private func recheck() { trusted = AccessibilityCheck.isGranted() }
 
     private func startPolling() {
         stopPolling()
@@ -457,15 +456,64 @@ struct AccessibilityStatusRow: View {
 }
 
 enum AccessibilityCheck {
-    /// Functional check: try to read system-wide AX. AXIsProcessTrusted() can lie about
-    /// stale TCC entries; this actually attempts to use AX.
     static func isGranted() -> Bool {
         if !AXIsProcessTrusted() { return false }
         let system = AXUIElementCreateSystemWide()
         var focused: CFTypeRef?
         let result = AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &focused)
-        // .success or .noValue both indicate we *can* query the AX tree
         return result == .success || result == .noValue
+    }
+}
+
+// MARK: - Sort helpers
+
+enum ModelSort: String, CaseIterable, Identifiable {
+    case name, priceAsc, contextDesc, newest
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .name: return "Name"
+        case .priceAsc: return "Price (low → high)"
+        case .contextDesc: return "Context (large → small)"
+        case .newest: return "Newest"
+        }
+    }
+}
+
+func sortModels(_ models: [OpenRouterModel], by mode: ModelSort) -> [OpenRouterModel] {
+    switch mode {
+    case .name:
+        return models.sorted { ($0.name ?? $0.id).localizedCaseInsensitiveCompare($1.name ?? $1.id) == .orderedAscending }
+    case .priceAsc:
+        return models.sorted {
+            (($0.combinedPrice ?? .greatestFiniteMagnitude), ($0.name ?? $0.id)) <
+            (($1.combinedPrice ?? .greatestFiniteMagnitude), ($1.name ?? $1.id))
+        }
+    case .contextDesc:
+        return models.sorted { ($0.contextLength ?? 0) > ($1.contextLength ?? 0) }
+    case .newest:
+        return models.sorted { ($0.createdAt ?? 0) > ($1.createdAt ?? 0) }
+    }
+}
+
+func describePrice(_ m: OpenRouterModel) -> String {
+    guard let p = m.promptPrice, let c = m.completionPrice else { return "—" }
+    return String(format: "$%.2f / $%.2f / 1M", p * 1_000_000, c * 1_000_000)
+}
+
+func describeContext(_ m: OpenRouterModel) -> String {
+    guard let ctx = m.contextLength, ctx > 0 else { return "—" }
+    if ctx >= 1_000_000 { return String(format: "%.1fM", Double(ctx) / 1_000_000) }
+    if ctx >= 1_000 { return "\(ctx / 1000)k" }
+    return "\(ctx)"
+}
+
+func modelMenuLabel(_ m: OpenRouterModel, sort: ModelSort) -> String {
+    let base = m.name ?? m.id
+    switch sort {
+    case .name, .newest: return base
+    case .priceAsc: return "\(base)  ·  \(describePrice(m))"
+    case .contextDesc: return "\(base)  ·  \(describeContext(m)) ctx"
     }
 }
 
@@ -478,103 +526,4 @@ func shortcutString(_ hk: Hotkey) -> String {
     if m.contains(.command) { s += "⌘" }
     s += KeyName.string(for: UInt16(hk.keyCode))
     return s
-}
-
-// MARK: - Editor sheet
-
-struct PresetEditor: View {
-    @Binding var preset: Preset
-    let onClose: () -> Void
-    let onDelete: () -> Void
-
-    @EnvironmentObject var store: PresetStore
-    @State private var draft: Preset
-
-    init(preset: Binding<Preset>,
-         onClose: @escaping () -> Void,
-         onDelete: @escaping () -> Void) {
-        self._preset = preset
-        self.onClose = onClose
-        self.onDelete = onDelete
-        self._draft = State(initialValue: preset.wrappedValue)
-    }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text("AI Action").font(.title3.weight(.semibold))
-                Spacer()
-            }
-            .padding(.horizontal, 20)
-            .padding(.top, 16)
-            .padding(.bottom, 8)
-
-            Divider()
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    field("Title") {
-                        TextField("Name", text: $draft.name)
-                            .textFieldStyle(.roundedBorder)
-                    }
-
-                    field("Prompt") {
-                        TextEditor(text: $draft.prompt)
-                            .font(.system(.body, design: .monospaced))
-                            .frame(minHeight: 180)
-                            .padding(6)
-                            .background(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .fill(Color(NSColor.textBackgroundColor))
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .strokeBorder(Color(NSColor.separatorColor))
-                            )
-                        Text("Use {selectedText} or {s} to insert the selected text.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    field("Shortcut") {
-                        HotkeyRecorder(hotkey: $draft.hotkey)
-                            .frame(width: 200, height: 26)
-                    }
-                }
-                .padding(20)
-            }
-
-            Divider()
-
-            HStack {
-                Button(role: .destructive) {
-                    onDelete()
-                } label: { Text("Delete") }
-
-                Spacer()
-
-                Button("Cancel") { onClose() }
-                    .keyboardShortcut(.cancelAction)
-
-                Button("Save") {
-                    preset = draft
-                    store.update(draft)
-                    onClose()
-                }
-                .keyboardShortcut(.defaultAction)
-                .buttonStyle(.borderedProminent)
-            }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 12)
-        }
-    }
-
-    @ViewBuilder
-    private func field(_ title: String, @ViewBuilder content: () -> some View) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title).font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.secondary)
-            content()
-        }
-    }
 }
