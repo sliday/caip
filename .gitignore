@@ -1,0 +1,27 @@
+# Swift / Xcode / SPM
+.build/
+.swiftpm/
+*.xcodeproj/
+DerivedData/
+Packages/
+Package.resolved
+
+# Build artifacts
+build/caip.app/
+build/AppIcon.iconset/
+build/_master_1024.png
+
+# macOS
+.DS_Store
+
+# Editor / IDE
+.vscode/
+*.swp
+.idea/
+
+# Local Claude session metadata
+.claude/
+
+# Misc
+codedb.snapshot
+*.log
