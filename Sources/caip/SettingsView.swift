@@ -105,11 +105,9 @@ struct SettingsView: View {
     @State private var modelsError: String?
 
     var body: some View {
-        NavigationSplitView(columnVisibility: .constant(.all)) {
+        NavigationSplitView {
             sidebar
                 .frame(minWidth: 320, idealWidth: 360, maxWidth: 460)
-                .navigationSplitViewColumnWidth(min: 320, ideal: 360, max: 460)
-                .toolbar(removing: .sidebarToggle)
         } detail: {
             detail
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -404,7 +402,6 @@ struct OpenRouterPane: View {
 
                             Button { reload() } label: {
                                 Image(systemName: "arrow.clockwise")
-                                    .symbolEffect(.rotate, options: modelsLoading ? .repeat(.continuous) : .nonRepeating)
                             }
                             .buttonStyle(.borderless)
                             .help("Refresh models list")
@@ -516,7 +513,7 @@ struct PresetPane: View {
 // MARK: - Accessibility
 
 struct AccessibilityStatusRow: View {
-    @State private var trusted: Bool = AccessibilityCheck.isGranted()
+    @State private var trusted: Bool = false
     @State private var timer: Timer?
     @State private var showingResetHint = false
 
@@ -583,10 +580,11 @@ struct AccessibilityStatusRow: View {
 
     private func startPolling() {
         stopPolling()
+        trusted = AccessibilityCheck.isGranted()
         timer = Timer.scheduledTimer(withTimeInterval: 1.5, repeats: true) { _ in
             let now = AccessibilityCheck.isGranted()
-            if now != trusted {
-                DispatchQueue.main.async { trusted = now }
+            Task { @MainActor in
+                if now != trusted { trusted = now }
             }
         }
     }
@@ -598,8 +596,8 @@ struct AccessibilityStatusRow: View {
 }
 
 struct LaunchAtLoginCard: View {
-    @State private var enabled = LoginItem.isEnabled
-    @State private var status = LoginItem.statusDescription
+    @State private var enabled = false
+    @State private var status = ""
     @State private var timer: Timer?
 
     var body: some View {
@@ -631,7 +629,7 @@ struct LaunchAtLoginCard: View {
         .onAppear {
             refresh()
             timer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { _ in
-                DispatchQueue.main.async { refresh() }
+                Task { @MainActor in refresh() }
             }
         }
         .onDisappear {

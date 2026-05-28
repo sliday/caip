@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "caip",
-    platforms: [.macOS("15.0")],
+    platforms: [.macOS("14.0")],
     targets: [
         .executableTarget(
             name: "caip",
