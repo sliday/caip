@@ -7,9 +7,9 @@ APP_NAME="caip"
 APP_DIR="build/${APP_NAME}.app"
 
 echo "==> swift build (${CONFIG})"
-swift build -c "${CONFIG}"
+swift build -c "${CONFIG}" --arch x86_64 --arch arm64
 
-BIN_PATH="$(swift build -c "${CONFIG}" --show-bin-path)/${APP_NAME}"
+BIN_PATH="$(swift build -c "${CONFIG}" --arch x86_64 --arch arm64 --show-bin-path)/${APP_NAME}"
 
 rm -rf "${APP_DIR}"
 mkdir -p "${APP_DIR}/Contents/MacOS"
