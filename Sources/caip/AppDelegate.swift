@@ -17,6 +17,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Task { @MainActor in self?.rebuildHotkeys() }
         }
         ensureAccessibilityPrompt()
+        UpdateChecker.scheduleLaunchCheck()
+    }
+
+    @objc func checkForUpdates() {
+        UpdateChecker.manualCheck()
     }
 
     func setStatusGlyph(_ extra: String? = nil) {
@@ -53,6 +58,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setStatusGlyph(nil)
         let menu = NSMenu()
         menu.addItem(withTitle: "Settings…", action: #selector(openSettings), keyEquivalent: ",").target = self
+        menu.addItem(withTitle: "Check for Updates…", action: #selector(checkForUpdates), keyEquivalent: "").target = self
         menu.addItem(NSMenuItem.separator())
         menu.addItem(withTitle: "Quit caip", action: #selector(quit), keyEquivalent: "q").target = self
         statusItem.menu = menu
