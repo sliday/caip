@@ -41,25 +41,23 @@ enum Toast {
     private static func present(host: NSView, position: Position, sticky: Bool, duration: TimeInterval) {
         dismissTask?.cancel()
 
-        let p: NSPanel
-        if let existing = panel {
-            p = existing
-        } else {
-            p = NSPanel(contentRect: host.frame,
+        // Build a fresh panel each time. Reusing one and resizing/swapping its SwiftUI
+        // host re-runs constraint updates on a borderless window and AppKit throws
+        // (NSWindow _postWindowNeedsUpdateConstraints) — crashes on the second toast.
+        panel?.orderOut(nil)
+        let p = NSPanel(contentRect: host.frame,
                         styleMask: [.borderless, .nonactivatingPanel],
                         backing: .buffered,
                         defer: false)
-            p.isFloatingPanel = true
-            p.level = .floating
-            p.hidesOnDeactivate = false
-            p.becomesKeyOnlyIfNeeded = true
-            p.backgroundColor = .clear
-            p.isOpaque = false
-            p.hasShadow = true
-            panel = p
-        }
+        p.isFloatingPanel = true
+        p.level = .floating
+        p.hidesOnDeactivate = false
+        p.becomesKeyOnlyIfNeeded = true
+        p.backgroundColor = .clear
+        p.isOpaque = false
+        p.hasShadow = true
         p.contentView = host
-        p.setContentSize(host.frame.size)
+        panel = p
 
         if let screen = NSScreen.main {
             let f = screen.visibleFrame
