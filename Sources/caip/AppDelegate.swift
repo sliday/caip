@@ -9,6 +9,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let hotkeys = HotkeyManager()
     let runner = ActionRunner()
 
+    private var pulseTimer: Timer?
+    private var pulseFrame = 0
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         setupMenubar()
@@ -38,25 +41,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Breathe the sparkle while a prompt runs — instant visual confirm the shortcut fired.
-    /// Core Animation layer opacity is the technique the menu bar actually renders;
-    /// per-view alphaValue and text-color alpha are both ignored for status buttons.
+    /// Drives the button layer's opacity per frame on a timer. The menu bar renders
+    /// layer opacity (it ignores alphaValue and text-color alpha), and a per-frame
+    /// timer self-heals: showing the toast panel triggers a display cycle that would
+    /// clear a one-shot CABasicAnimation, but the next tick re-applies the opacity.
     func startGlyphPulse() {
         guard let btn = statusItem?.button else { return }
         btn.wantsLayer = true
-        guard btn.layer?.animation(forKey: "caip.pulse") == nil else { return }
-        let pulse = CABasicAnimation(keyPath: "opacity")
-        pulse.fromValue = 1.0
-        pulse.toValue = 0.2
-        pulse.duration = 0.6
-        pulse.autoreverses = true
-        pulse.repeatCount = .infinity
-        pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        btn.layer?.add(pulse, forKey: "caip.pulse")
+        guard pulseTimer == nil else { return }
+        pulseFrame = 0
+        pulseTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.tickPulse() }
+        }
+    }
+
+    private func tickPulse() {
+        guard let layer = statusItem?.button?.layer else { return }
+        pulseFrame += 1
+        let period: CGFloat = 36 // ~1.2s at 30fps
+        let phase = CGFloat(pulseFrame).truncatingRemainder(dividingBy: period) / period
+        let eased = (1 - cos(phase * 2 * .pi)) / 2 // 0 → 1 → 0
+        layer.opacity = Float(1.0 - 0.8 * eased) // 1.0 → 0.2 → 1.0
     }
 
     func stopGlyphPulse(showCheck: Bool) {
-        statusItem?.button?.layer?.removeAnimation(forKey: "caip.pulse")
-        statusItem?.button?.alphaValue = 1.0
+        pulseTimer?.invalidate()
+        pulseTimer = nil
+        pulseFrame = 0
+        statusItem?.button?.layer?.opacity = 1.0
         if showCheck {
             setStatusGlyph("✓")
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
