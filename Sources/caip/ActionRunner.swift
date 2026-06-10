@@ -8,6 +8,7 @@ final class ActionRunner {
     func run(presetId: UUID) {
         guard !running else { return }
         running = true
+        startFeedback()
         Task { @MainActor in
             defer { self.running = false }
             await self.execute(presetId: presetId)
@@ -16,7 +17,10 @@ final class ActionRunner {
 
     private func execute(presetId: UUID) async {
         let store = PresetStore.shared
-        guard let preset = store.presets.first(where: { $0.id == presetId }) else { return }
+        guard let preset = store.presets.first(where: { $0.id == presetId }) else {
+            finishFeedback(success: false, replaced: false)
+            return
+        }
 
         if !AccessibilityCheck.isGranted() {
             Toast.show(title: "Accessibility access required",
@@ -25,6 +29,7 @@ final class ActionRunner {
                        tint: .orange,
                        duration: 3.5)
             AppDelegate.requestAccessibility()
+            finishFeedback(success: false, replaced: true)
             return
         }
 
@@ -35,12 +40,14 @@ final class ActionRunner {
                        body: "Select some text, then press the shortcut.",
                        icon: "text.cursor",
                        tint: .secondary)
+            finishFeedback(success: false, replaced: true)
             return
         case .copyFailed:
             Toast.show(title: "Couldn't read selection",
                        body: "The focused app may block ⌘C.",
                        icon: "exclamationmark.triangle.fill",
                        tint: .orange)
+            finishFeedback(success: false, replaced: true)
             return
         case .success(let selection):
             await run(preset: preset,
@@ -69,7 +76,6 @@ final class ActionRunner {
             .replacingOccurrences(of: "{selectedText}", with: selection)
             .replacingOccurrences(of: "{s}", with: selection)
 
-        showStatus("⌛")
         do {
             let result = try await OpenRouter.complete(
                 prompt: prompt,
@@ -79,14 +85,14 @@ final class ActionRunner {
                 requireKey: requireKey
             )
             paste(text: result.trimmingCharacters(in: .whitespacesAndNewlines))
-            showStatus("✓")
+            finishFeedback(success: true, replaced: false)
         } catch {
             Toast.show(title: "OpenRouter error",
                        body: error.localizedDescription,
                        icon: "exclamationmark.octagon.fill",
                        tint: .red,
                        duration: 4.0)
-            showStatus(nil)
+            finishFeedback(success: false, replaced: true)
         }
     }
 
@@ -144,13 +150,23 @@ final class ActionRunner {
         Toast.show(title: title, body: body)
     }
 
-    private func showStatus(_ text: String?) {
-        guard let delegate = NSApp.delegate as? AppDelegate else { return }
-        delegate.setStatusGlyph(text)
-        if text != nil {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-                delegate.setStatusGlyph(nil)
-            }
+    private var delegate: AppDelegate? { NSApp.delegate as? AppDelegate }
+
+    private func startFeedback() {
+        delegate?.startGlyphPulse()
+        if PresetStore.shared.showToaster {
+            Toast.showProgress(title: "Thinking…")
+        }
+    }
+
+    // `replaced` means an error/info toast already took over the pill, so we leave it alone.
+    private func finishFeedback(success: Bool, replaced: Bool) {
+        delegate?.stopGlyphPulse(showCheck: success)
+        guard PresetStore.shared.showToaster else { return }
+        if success {
+            Toast.resolveProgress()
+        } else if !replaced {
+            Toast.dismiss()
         }
     }
 }

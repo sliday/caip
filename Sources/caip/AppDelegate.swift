@@ -9,6 +9,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let hotkeys = HotkeyManager()
     let runner = ActionRunner()
 
+    private var pulseTimer: Timer?
+    private var pulseFrame = 0
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         setupMenubar()
@@ -25,16 +28,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func setStatusGlyph(_ extra: String? = nil) {
+        applyGlyph(extra: extra, alpha: 1.0, colored: false)
+    }
+
+    private func applyGlyph(extra: String?, alpha: CGFloat, colored: Bool) {
         guard let btn = statusItem?.button else { return }
         let glyph = "✦"
         let combined = (extra.map { " \($0)" } ?? "")
-        btn.attributedTitle = NSAttributedString(
-            string: glyph + combined,
-            attributes: [
-                .font: NSFont.systemFont(ofSize: 15, weight: .semibold),
-                .baselineOffset: 0
-            ]
-        )
+        var attrs: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 15, weight: .semibold),
+            .baselineOffset: 0
+        ]
+        if colored {
+            attrs[.foregroundColor] = NSColor.labelColor.withAlphaComponent(alpha)
+        }
+        btn.attributedTitle = NSAttributedString(string: glyph + combined, attributes: attrs)
+    }
+
+    /// Breathe the sparkle while a prompt runs — instant visual confirm the shortcut fired.
+    func startGlyphPulse() {
+        guard pulseTimer == nil else { return }
+        pulseFrame = 0
+        pulseTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.tickPulse() }
+        }
+    }
+
+    func stopGlyphPulse(showCheck: Bool) {
+        pulseTimer?.invalidate()
+        pulseTimer = nil
+        pulseFrame = 0
+        if showCheck {
+            setStatusGlyph("✓")
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+                self?.setStatusGlyph(nil)
+            }
+        } else {
+            setStatusGlyph(nil)
+        }
+    }
+
+    private func tickPulse() {
+        pulseFrame += 1
+        let period: CGFloat = 42 // ~1.4s at 30fps
+        let phase = CGFloat(pulseFrame).truncatingRemainder(dividingBy: period) / period
+        let eased = (1 - cos(phase * 2 * .pi)) / 2 // 0 → 1 → 0
+        let alpha = 1.0 - 0.7 * eased
+        applyGlyph(extra: nil, alpha: alpha, colored: true)
     }
 
     func ensureAccessibilityPrompt() {

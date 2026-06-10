@@ -12,6 +12,7 @@ final class PresetStore {
     var defaultModel: String = "openrouter/auto"
     var preset: ServicePreset = .openRouter
     var baseURL: String = ServicePreset.openRouter.defaultBaseURL
+    var showToaster: Bool = false
 
     @ObservationIgnored var onChange: (() -> Void)?
 
@@ -20,6 +21,7 @@ final class PresetStore {
     @ObservationIgnored private let apiKeyKey = "caip.openrouterApiKey"
     @ObservationIgnored private let presetKey = "caip.servicePreset"
     @ObservationIgnored private let baseURLKey = "caip.serviceBaseURL"
+    @ObservationIgnored private let showToasterKey = "caip.showToaster"
 
     init() {
         let fm = FileManager.default
@@ -38,6 +40,7 @@ final class PresetStore {
         if let savedURL = UserDefaults.standard.string(forKey: baseURLKey), !savedURL.isEmpty {
             self.baseURL = savedURL
         }
+        self.showToaster = UserDefaults.standard.bool(forKey: showToasterKey)
         load()
         if let stored = UserDefaults.standard.string(forKey: apiKeyKey) {
             apiKey = stored
@@ -58,6 +61,11 @@ final class PresetStore {
     func updateBaseURL(_ value: String) {
         baseURL = value
         UserDefaults.standard.set(value, forKey: baseURLKey)
+    }
+
+    func updateShowToaster(_ value: Bool) {
+        showToaster = value
+        UserDefaults.standard.set(value, forKey: showToasterKey)
     }
 
     func updateDefaultModel(_ value: String) {

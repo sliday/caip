@@ -273,6 +273,8 @@ struct OpenRouterPane: View {
 
                 LaunchAtLoginCard()
 
+                ProgressToasterCard()
+
                 Card("Provider", icon: "server.rack") {
                     VStack(alignment: .leading, spacing: 12) {
                         HStack(spacing: 12) {
@@ -641,6 +643,36 @@ struct LaunchAtLoginCard: View {
     private func refresh() {
         enabled = LoginItem.isEnabled
         status = LoginItem.statusDescription
+    }
+}
+
+struct ProgressToasterCard: View {
+    @Environment(PresetStore.self) private var store
+
+    var body: some View {
+        Card("Feedback", icon: "bell.badge") {
+            HStack(spacing: 12) {
+                Image(systemName: store.showToaster ? "bell.badge.fill" : "bell.badge")
+                    .font(.system(size: 18))
+                    .foregroundStyle(store.showToaster ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+                    .symbolRenderingMode(.hierarchical)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Progress toaster")
+                        .font(.system(size: 13, weight: .medium))
+                    Text("A compact pill confirms each run. Handy if you hide the menubar icon.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+                Toggle("", isOn: Binding(
+                    get: { store.showToaster },
+                    set: { store.updateShowToaster($0) }
+                ))
+                .labelsHidden()
+                .toggleStyle(.switch)
+            }
+        }
     }
 }
 
