@@ -41,14 +41,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// Breathe the sparkle while a prompt runs — instant visual confirm the shortcut fired.
-    /// Drives the button layer's opacity per frame on a timer. The menu bar renders
-    /// layer opacity (it ignores alphaValue and text-color alpha), and a per-frame
-    /// timer self-heals: showing the toast panel triggers a display cycle that would
-    /// clear a one-shot CABasicAnimation, but the next tick re-applies the opacity.
+    /// Swaps the button's image (a glyph rendered at a varying alpha) every frame.
+    /// Changing content marks the status item dirty and forces the display cycle —
+    /// the reliable menubar-animation mechanism. Setting layer.opacity or alphaValue
+    /// does not refresh the live menu bar for an accessory app's status item.
     func startGlyphPulse() {
-        guard let btn = statusItem?.button else { return }
-        btn.wantsLayer = true
-        guard pulseTimer == nil else { return }
+        guard pulseTimer == nil, statusItem?.button != nil else { return }
         pulseFrame = 0
         pulseTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tickPulse() }
@@ -56,19 +54,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func tickPulse() {
-        guard let layer = statusItem?.button?.layer else { return }
+        guard let btn = statusItem?.button else { return }
         pulseFrame += 1
         let period: CGFloat = 36 // ~1.2s at 30fps
         let phase = CGFloat(pulseFrame).truncatingRemainder(dividingBy: period) / period
         let eased = (1 - cos(phase * 2 * .pi)) / 2 // 0 → 1 → 0
-        layer.opacity = Float(1.0 - 0.8 * eased) // 1.0 → 0.2 → 1.0
+        let alpha = 1.0 - 0.85 * eased // 1.0 → 0.15 → 1.0
+        btn.attributedTitle = NSAttributedString(string: "")
+        btn.image = Self.glyphImage(alpha: alpha)
+        btn.imagePosition = .imageOnly
+    }
+
+    private static func glyphImage(alpha: CGFloat) -> NSImage {
+        let font = NSFont.systemFont(ofSize: 15, weight: .semibold)
+        let glyph = "✦" as NSString
+        let probe = glyph.size(withAttributes: [.font: font])
+        let size = NSSize(width: ceil(probe.width), height: ceil(probe.height))
+        let img = NSImage(size: size, flipped: false) { _ in
+            glyph.draw(at: .zero, withAttributes: [
+                .font: font,
+                .foregroundColor: NSColor.black.withAlphaComponent(alpha)
+            ])
+            return true
+        }
+        img.isTemplate = true // menu bar tints to the correct color; alpha drives the mask
+        return img
     }
 
     func stopGlyphPulse(showCheck: Bool) {
         pulseTimer?.invalidate()
         pulseTimer = nil
         pulseFrame = 0
-        statusItem?.button?.layer?.opacity = 1.0
+        statusItem?.button?.image = nil
+        statusItem?.button?.imagePosition = .noImage
         if showCheck {
             setStatusGlyph("✓")
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
